@@ -1,0 +1,156 @@
+\documentclass[a4paper]{article}
+
+\usepackage[a4paper, top=8mm, bottom=8mm, left=8mm, right=8mm]{geometry}
+
+\usepackage{polyglossia}
+\setdefaultlanguage[babelshorthands=true]{russian}
+\setotherlanguage{english}
+
+\usepackage{fontspec}
+\setmainfont{FreeSerif}
+\newfontfamily{\russianfonttt}[Scale=0.7]{DejaVuSansMono}
+
+\usepackage[tiny, compact]{titlesec}
+
+\usepackage{titling}
+\setlength{\droptitle}{-1cm}
+\pretitle{\begin{center}\begin{bfseries}\Large}
+\posttitle{\par\end{bfseries}\end{center}}
+\preauthor{\begin{center}\normalsize}
+\postauthor{\par\end{center}\vspace{-1.8cm}}
+
+\usepackage{hyperref}
+\usepackage{bookmark}
+\usepackage{csquotes}
+
+\title{Интеграция и развитие подхода Palantir в системе MarLine}
+
+\author{Белимов Максим}
+
+\date{}
+
+\begin{document}
+
+\maketitle
+
+\begin{flushright}
+    Группа: \emph{25.Б72-мм}
+
+    Кафедра: \emph{Кафедра системного программирования СПбГУ}
+
+    Научный руководитель: \emph{Гориховский Вячеслав Игоревич}
+
+    Консультант: \emph{Дмитриевцев Алексей Сергеевич}
+
+    Младший инженер по разработке ПО ООО "КНС ГРУПП"
+
+    Номер семестра практики: \emph{3}
+\end{flushright}
+
+\section{Постановка задачи}
+
+Работа выполняется в рамках open source-проекта MarLine --- системы хранения данных с двухуровневой дедупликацией: контентно-ориентированное разбиение (CDC) отсекает неизменные данные, а Similarity-Based Chunking подбирает для каждого чанка похожий базовый чанк и хранит его в виде дельты. Одним из методов построения такой дельты является Palantir --- наследник подхода Odess, основанный на иерархии тиров (уровней) и суперфич: многоуровневая структура позволяет группировать блоки с разной степенью схожести и последовательно сужать множество кандидатов поиска пары для дельта-кодирования. В оригинальной реализации Palantir число тиров и число суперфич на каждом тире жёстко зафиксированы, тогда как для разных типов данных оптимальная структура иерархии может заметно отличаться.
+
+\textbf{Целью работы является} интеграция в систему MarLine модифицированной реализации Palantir с полностью гибкой конфигурацией иерархии тиров и суперфич, а также исследование влияния структуры этой иерархии на эффективность дельта-кодирования.
+
+Для достижения цели требуется решить следующие задачи:
+
+\begin{enumerate}
+    \item \textbf{Поиск датасета для проведения бенчмарков.} Подобрать и подготовить наборы данных для экспериментов (бекапы, версии ядра Linux), пригодные для сравнения алгоритмов дельта-кодирования. Зафиксировать манифест набора: версии, URL, SHA-256, лицензию и роль каждого файла; подготовить скрипт воспроизводимой загрузки и разбиение данных на окна сравнения.
+    \item \textbf{Инструментарий бенчмарков.} Разработать средство автоматизированного запуска бенчмарков: сбор метрик (коэффициент сжатия, время кодирования, пропускная способность, размер метаданных), обеспечение воспроизводимости прогонов и выгрузка результатов в табличный вид.
+    \item \textbf{Реализация конфигурируемой иерархии в MarLine.}
+    \begin{enumerate}
+        \item \textit{Проектирование решения.} Изучить оригинальную реализацию Palantir и подсистему дельта-кодирования MarLine, спроектировать конфигурируемое представление иерархии: число тиров, число суперфич на каждом тире, число исходных признаков и сопутствующие параметры алгоритма, с сохранением поведения, эквивалентного оригиналу при настройках по умолчанию.
+        \item \textit{Интеграция в MarLine.} Внедрить поддержку произвольной структуры тиров и суперфич в реализацию Palantir, интегрировать её в конвейер обработки MarLine и подключить к конфигурации системы; покрыть модификацию юнит- и интеграционными тестами, проверить корректность кодирования и декодирования (round-trip) на различных конфигурациях и наборах данных.
+    \end{enumerate}
+    \item \textbf{Проведение экспериментов.} Выполнить замеры для разных конфигураций тиров и суперфич и сравнить их с оригинальным Palantir и Odess; для бенчмарков различных алгоритмов чанкинга и хеш-функций может использоваться ChunkFS --- файловая система, позволяющая сравнивать разные алгоритмы чанкинга на разных типах хранилищ. Обработать данные с приведением среднего и среднеквадратического отклонения.
+    \item \textbf{Обобщение результатов.} Сформулировать рекомендации по выбору структуры иерархии для разных классов данных, оформить отчёт, документацию и pull request в репозиторий проекта.
+\end{enumerate}
+
+Результаты работы необходимы для того, чтобы систематически подбирать структуру иерархии Palantir под тип данных и повышать качество дельта-сжатия в MarLine. В выполнении работы заинтересованы команда разработки проекта MarLine.
+
+\paragraph{Уточнение по итогам обзора.} Достаточно разделить конфигурацию на число исходных признаков $N$, число тиров $T$ и вектор $s_i$ (число признаков в одной суперфиче $i$-го тира), проверяя инвариант $N \bmod s_i = 0$ и вычисляя $k_i = N/s_i$. Настройки по умолчанию должны воспроизводить оригинал: $N=12$, $s=[4,3,2]$, sampling rate $1/128$, хранение Tier-1 для всех версий, Tier-2 --- 5 версий, Tier-3 --- 2 версии. CDC и delta-энкодер нужно зафиксировать между конфигурациями; на первом этапе достаточно Linux kernel, backup-style данные добавляются позже.
+
+\section{Обзор}
+
+Обзор ограничен работами, которые задают механизмы для сравнения с Palantir и методику бенчмарков.
+
+\subsection{Конвейер и метрики}
+
+Конвейер включает дедупликацию, дельта-кодирование и lossless-сжатие \cite{palantir2024}. Resemblance detection и delta encoding нужно измерять отдельно; основные метрики --- E2E, DCC, delta gain, throughput и размер метаданных.
+
+\subsection{Поиск похожих блоков}
+
+N-Transform вычисляет $N$ линейных преобразований rolling hash, выбирает глобальные минимумы и группирует их в $k$ суперфич по $s$ признаков \cite{shilane2012}. Параметры $(k,s)$ фиксированы, а $N$ должно делиться на $k$. Finesse использует локальные признаки подчанков и ускоряет вычисление сходства в 3.2--3.5 раза \cite{finesse2019}.
+
+Odess применяет SWPR на SIMD и content-defined sampling, выполняя преобразования только над proxy-набором хешей \cite{odess2023}. Генерация признаков ускорена в 31.4 раза относительно N-Transform и в 7.9 раза относительно Finesse; E2E throughput выше в 3.20 и 1.41 раза. Ограничение --- один фиксированный порог похожести.
+
+Palantir добавляет к Odess иерархию тиров \cite{palantir2024}. По умолчанию $N=12$, $s=[4,3,2]$, $k=[3,4,6]$; поиск идёт от Tier-1 к Tier-3, а менеджер метаданных хранит Tier-1 для всех версий, Tier-2 --- 5 версий, Tier-3 --- 2. Заявлено +7.3\% E2E над Odess/N-Transform, +26.5\% над Finesse, +27.4\% покрытия и −7.7\% throughput; на Linux выигрыш около 1.1\%. Публичная реализация в статье не указана.
+
+BePro и Argus улучшают гибкость поиска (1.15--2.35 и до 1.64--2.29 раза соответственно), но не дают настраиваемой иерархии тиров \cite{bepro2025,argus2025}.
+
+\subsection{Delta-кодирование и инструменты}
+
+Xdelta и Zdelta медленны; Gdelta использует Gear hash, sampling index и пакетное сжатие остатка, ускоряя кодирование и декодирование в 3.5--25 раз при росте коэффициента на 10--240\% \cite{gdelta2024}. В MarLine уже есть Gdelta, Xdelta, Zdelta и Ddelta; кодер нужно зафиксировать, поскольку фильтр ложных срабатываний Palantir зависит от фактической дельты. MarLine предоставляет \texttt{OdessHasher}, \texttt{SBCMap}, \texttt{SBCScrubber} и \texttt{GdeltaEncoder}, но не содержит иерархии тиров \cite{marline}. ChunkFS --- in-memory стенд для CDC и хешеров; его ограничение --- память и один узел \cite{chunkfs}.
+
+\subsection{Данные}
+
+В Palantir использовались пять backup-наборов и Linux 5.0.1--5.0.21; backup-версии создавались синтетически \cite{palantir2024}. Исходные backup-данные не опубликованы, а ссылки на публичные trace-наборы часто устарели. Linux воспроизводим и имеет подписанные контрольные суммы, но это только класс исходного кода: на Linux выигрыш от тиров мал \cite{kernel}.
+
+\subsection{Анализ и выводы}
+
+\begin{enumerate}
+    \item \textbf{Архитектура.} Сохранить конвейер MarLine и добавить многоуровневый индекс суперфич, переиспользуя \texttt{SBCMap}, \texttt{SBCScrubber} и \texttt{GdeltaEncoder}.
+    \item \textbf{Метод.} Palantir выбирается как основной метод, поскольку только он даёт явную иерархию тиров; BePro и Argus --- related work.
+    \item \textbf{Конфигурация.} Разделить $N$, $T$ и $s_i$, проверять инварианты и обеспечить default-equivalence с $N=12$, $s=[4,3,2]$, sampling rate $1/128$.
+    \item \textbf{Данные.} На первом этапе используется Linux kernel; backup-style набор нужен для проверки обобщения.
+    \item \textbf{Метрики и воспроизводимость.} Измерять E2E, DCC, delta gain, throughput, метаданные и ложные срабатывания; фиксировать CDC, delta-кодер, Zstd и seed.
+\end{enumerate}
+
+Цель уточняется в сторону экспериментального исследования пространства конфигураций. Задачи дополнены манифестом данных, default-equivalence, фиксацией кодера и статистической обработкой.
+
+\section{Описание предлагаемого решения}
+
+Добавляется отдельный конфигурируемый слой Palantir без изменения Odess-baseline. Конфигурация задаёт $N$, sampling rate, вектор тиров и retention; для каждого тира хранятся $k_i$ и $s_i$ с инвариантом $N=k_i \cdot s_i$. По умолчанию используются $N=12$, $s=[4,3,2]$, $k=[3,4,6]$, sampling rate $1/128$ и retention $[all,5,2]$. На уровне хешера строится общий набор признаков и суперфичи для каждого тира, на уровне scrubber добавляется многоуровневый индекс с поиском от Tier-1 к Tier-$T$ и фильтром по выигрышу дельты. Тесты покрывают инварианты, round-trip, default-equivalence, retention и Odess-режим.
+
+\section{Ход выполнения первой задачи}
+
+Backup-данные Palantir не опубликованы, а ссылки на TAR/LNX/WEB/VMA/CHM устарели; поэтому первым выбран Linux kernel. Для 14 уникальных версий проверены HTTP-ответы, размеры и SHA-256 из \texttt{sha256sums.asc}, добавлена точная копия 6.6.28 для проверки дубликатов. Подготовлены \texttt{materials/kernels/manifest.csv}, \texttt{materials/kernels/SHA256SUMS}, \texttt{scripts/fetch\_kernel\_dataset.sh} и \texttt{reports/datasets.md}. Скрипт проверен в режиме \texttt{-{}-check} без полной загрузки.
+
+Сжатый набор занимает около 1.84 ГБ; полная распаковка требует существенно больше диска, поэтому используется срез. Планируются 14 окон по две соседние версии и единый срез по 15 версиям; для каждого режима собираются E2E, delta gain, DCC, throughput, метаданные и число ложных срабатываний.
+
+Поиск backup-данных оказался сложнее ожидаемого, а in-memory ChunkFS создаёт давление на память. Это не меняет постановку задачи, но объясняет, почему первый этап сосредоточен на Linux.
+
+\section{Апробация / Эксперименты}
+
+Экспериментальная часть ещё не завершена; план --- тесты конфигурации и round-trip, прогоны Odess и фиксированного Palantir, затем гибкие конфигурации с разными $T$, $s_i$ и $N$.
+
+\section{Заключение}
+
+Palantir занимает нишу между фиксированными методами resemblance detection и более новыми адаптивными подходами, но не даёт гибкой конфигурации. Обоснованы открытая конфигурируемая реализация, default-equivalence, фиксация delta-кодера и разделение классов данных. В рамках первой задачи подготовлен Linux kernel датасет; следующие шаги --- интеграция иерархии в MarLine, тесты default-equivalence и эксперименты с добавлением backup-style данных.
+
+\begin{thebibliography}{99}
+
+\bibitem{shilane2012} P. Shilane, M. Huang, G. Wallace, W. Hsu. WAN-optimized Replication of Backup Datasets Using Stream-informed Delta Compression. \emph{ACM Transactions on Storage}, 8(4):1--26, 2012. DOI: \url{https://doi.org/10.1145/2385603.2385606}.
+
+\bibitem{finesse2019} Y. Zhang, W. Xia, D. Feng, H. Jiang, Y. Hua, Q. Wang. Finesse: Fine-Grained Feature Locality based Fast Resemblance Detection for Post-Deduplication Delta Compression. \emph{USENIX FAST}, pp. 121--128, 2019. \url{https://www.usenix.org/system/files/fast19-zhang.pdf}.
+
+\bibitem{odess2023} W. Xia, L. Pu, X. Zou, P. Shilane, S. Li, H. Zhang, X. Wang. The Design of Fast and Lightweight Resemblance Detection for Efficient Post-Deduplication Delta Compression. \emph{ACM Transactions on Storage}, 19(3):1--30, 2023. DOI: \url{https://doi.org/10.1145/3584663}.
+
+\bibitem{palantir2024} H. Huang, P. Wang, Q. Su, H. Xu, C. J. Xue, A. Brinkmann. Palantir: Hierarchical Similarity Detection for Post-Deduplication Delta Compression. \emph{ASPLOS}, Vol. 2, pp. 830--845, 2024. DOI: \url{https://doi.org/10.1145/3620665.3640353}.
+
+\bibitem{bepro2025} F. Yang, B. Mao, Y. Liu, L. Bao, W. Jiang, D. Zhang, C. Li, K. Zhou. Achieving Better Benefits via Flexible Feature Matching in Post-Deduplication Delta Compression. \emph{IEEE IPDPS}, pp. 998--1010, 2025. DOI: \url{https://doi.org/10.1109/IPDPS64566.2025.00093}.
+
+\bibitem{argus2025} H. Xu, X. Zou, Y. Dong, P. Shilane, Y. Pan, C. Deng, W. Xia. Argus: A Precise and Efficient Resemblance Detection for Post-Deduplication Delta Compression. \emph{ACM Transactions on Storage}, 22(1):1--29, 2025. DOI: \url{https://doi.org/10.1145/3747839}.
+
+\bibitem{gdelta2024} H. Tan, W. Xia, X. Zou, C. Deng, Q. Liao, Z. Gu. The Design of Fast Delta Encoding for Delta Compression Based Storage Systems. \emph{ACM Transactions on Storage}, 20(4):1--30, 2024. DOI: \url{https://doi.org/10.1145/3664817}.
+
+\bibitem{chunkfs} O. Piletskii. ChunkFS: In-memory File System for Chunking Algorithms Benchmarking. \url{https://github.com/Piletskii-Oleg/chunkfs} (accessed 2026-10-25).
+
+\bibitem{marline} A. Dmitrievtsev, M. Belimov. MarLine: Similarity-Based Chunking Library. \url{https://github.com/Maxllon/marline} (accessed 2026-10-25).
+
+\bibitem{kernel} Linux Kernel Archives. \url{https://www.kernel.org/} (accessed 2026-10-25).
+
+\end{thebibliography}
+
+\end{document}
